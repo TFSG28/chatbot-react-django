@@ -45,7 +45,7 @@ def predict(request):
             prediction = response["message"]["content"]
 
         # Save to database
-        chat_history = ChatHistory.objects.create(
+        ChatHistory.objects.create(
             session=session,
             user_input=user_input, 
             response=prediction
