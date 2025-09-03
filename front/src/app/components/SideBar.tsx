@@ -158,9 +158,6 @@ export default function SideBar({ onNewChat, onSelectChat, currentChatId }: Side
                                                 <h3 className="text-sm font-medium truncate">
                                                     {truncateText(chat.title)}
                                                 </h3>
-                                                <p className="text-xs text-gray-400 mt-1 truncate">
-                                                    {truncateText(chat.lastMessage)}
-                                                </p>
                                                 <p className="text-xs text-gray-500 mt-1">
                                                     {formatTimestamp(chat.timestamp)}
                                                 </p>

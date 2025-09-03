@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import SideBar from "./components/SideBar";
+import { FaRegStopCircle } from "react-icons/fa";
+import { LuSend } from "react-icons/lu";
 
 interface Message {
   id: string;
@@ -17,7 +19,9 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [currentChatId, setCurrentChatId] = useState<string>();
   const [chatTitle, setChatTitle] = useState<string>("");
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -26,6 +30,28 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isLoading]);
+
+  const adjustTextareaHeight = () => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      const scrollHeight = textarea.scrollHeight;
+      const maxHeight = 240; // Maximum height (approximately 5 lines)
+      const minHeight = 48; // Minimum height (1 line)
+      
+      if (scrollHeight > maxHeight) {
+        textarea.style.height = `${maxHeight}px`;
+        textarea.style.overflowY = 'auto';
+      } else {
+        textarea.style.height = `${Math.max(scrollHeight, minHeight)}px`;
+        textarea.style.overflowY = 'hidden';
+      }
+    }
+  };
+
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [inputValue]);
 
   const handleNewChat = () => {
     setMessages([]);
@@ -54,6 +80,48 @@ export default function Home() {
     }
   };
 
+  const handleStopMessage = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+      setIsLoading(false);
+    }
+  };
+
+  const formatMessageContent = (content: string) => {
+    // Split content by code blocks (```language or ```)
+    const parts = content.split(/(```[\s\S]*?```)/g);
+    
+    return parts.map((part, index) => {
+      if (part.startsWith('```') && part.endsWith('```')) {
+        // Extract language and code
+        const lines = part.slice(3, -3).split('\n');
+        const language = lines[0].trim();
+        const code = lines.slice(1).join('\n');
+        
+        return (
+          <div key={index} className="my-4">
+            <div className="bg-gray-200 dark:bg-gray-700 rounded-t-lg px-4 py-2 text-sm text-gray-700 dark:text-gray-300 border-b border-gray-300 dark:border-gray-600">
+              {language || 'code'}
+            </div>
+            <div className="bg-black rounded-b-lg p-4 overflow-auto">
+              <pre className="text-sm">
+                <code className="text-green-400">{code}</code>
+              </pre>
+            </div>
+          </div>
+        );
+      } else {
+        // Regular text with line breaks preserved
+        return (
+          <span key={index} className="whitespace-pre-wrap">
+            {part}
+          </span>
+        );
+      }
+    });
+  };
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return;
 
@@ -68,6 +136,10 @@ export default function Home() {
     setInputValue("");
     setIsLoading(true);
 
+    // Create abort controller for this request
+    const controller = new AbortController();
+    setAbortController(controller);
+
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/predict/`, {
         method: "POST",
@@ -77,8 +149,13 @@ export default function Home() {
         body: JSON.stringify({
           input: userMessage.content,
           session_id: currentChatId
-        })
+        }),
+        signal: controller.signal
       });
+
+      if (controller.signal.aborted) {
+        return;
+      }
 
       const data = await response.json();
 
@@ -97,6 +174,11 @@ export default function Home() {
         setChatTitle(data.chat_title);
       }
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        // Request was aborted, don't show error message
+        return;
+      }
+      
       const errorMessage: Message = {
         id: (Date.now() + 2).toString(),
         content: "Error: Could not reach server",
@@ -107,12 +189,25 @@ export default function Home() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+      setAbortController(null);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInputValue(e.target.value);
+  };
+
+  const handleButtonClick = () => {
+    if (isLoading) {
+      handleStopMessage();
+    } else {
       handleSendMessage();
     }
   };
@@ -162,7 +257,11 @@ export default function Home() {
                         : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-white border border-gray-200 dark:border-gray-700'
                       }`}
                   >
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <div>
+                      {message.role === 'assistant' ? formatMessageContent(message.content) : (
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -188,33 +287,26 @@ export default function Home() {
             <div className="flex space-x-4">
               <div className="flex-1 relative">
                 <textarea
+                  ref={textareaRef}
                   value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyPress}
                   placeholder="Message ChatBot..."
                   className="w-full px-4 py-3 pr-12 border border-gray-300 dark:border-gray-600 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white dark:placeholder-gray-400"
                   rows={1}
-                  style={{ minHeight: '48px', maxHeight: '200px' }}
+                  style={{ minHeight: '48px' }}
                   disabled={isLoading}
                 />
                 <button
-                  onClick={handleSendMessage}
-                  disabled={!inputValue.trim() || isLoading}
+                  onClick={handleButtonClick}
+                  disabled={!isLoading && !inputValue.trim()}
                   className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="22" y1="2" x2="11" y2="13"></line>
-                    <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
-                  </svg>
+                  {isLoading ? (
+                    <FaRegStopCircle size={20} />
+                  ) : (
+                    <LuSend size={20} />
+                  )}
                 </button>
               </div>
             </div>
